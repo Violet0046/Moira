@@ -1,9 +1,16 @@
 """智能体基类"""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from openai import OpenAI
+from openai import AsyncOpenAI
 import os
+from dotenv import load_dotenv
+import asyncio
+import time
+
+# 加载环境变量
+load_dotenv()
 
 class BaseAgent(ABC):
     """智能体基类"""
@@ -12,9 +19,24 @@ class BaseAgent(ABC):
         self.agent_id = agent_id
         self.name = name
         self.personality = personality
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "dummy_key"))
-        self.memory = {}  # 工作记忆
-        self.long_term_memory = None  # ChromaDB连接（后续实现）
+
+        # 初始化API客户端（同步和异步）
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key or api_key == "your_api_key_here":
+            raise ValueError("OPENAI_API_KEY not found in .env file or not set properly")
+
+        self.client = OpenAI(api_key=api_key)
+        self.async_client = AsyncOpenAI(api_key=api_key)
+
+        # 工作记忆
+        self.memory = {}
+
+        # 长期记忆系统（ChromaDB）
+        self.long_term_memory = None
+
+    def set_memory_system(self, memory_system):
+        """设置长期记忆系统"""
+        self.long_term_memory = memory_system
 
     @abstractmethod
     def think(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -26,52 +48,136 @@ class BaseAgent(ABC):
         """执行行为"""
         pass
 
-    def query_llm(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """调用大语言模型"""
+    def query_llm(self, prompt: str, system_prompt: Optional[str] = None,
+                 use_memory: bool = True, top_k: int = 3) -> str:
+        """调用大语言模型（同步版本）"""
+        # 如果启用记忆且记忆系统可用，搜索相关记忆
+        memory_context = ""
+        if use_memory and self.long_term_memory:
+            memory_context = self._search_memory(prompt, top_k)
+
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+
+        # 构建用户提示词，包含记忆上下文
+        user_content = prompt
+        if memory_context:
+            user_content = f"相关记忆:\n{memory_context}\n\n当前请求:\n{prompt}"
+
+        messages.append({"role": "user", "content": user_content})
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
                 messages=messages,
                 temperature=0.7,
-                max_tokens=500
+                max_tokens=1000
             )
             return response.choices[0].message.content
         except Exception as e:
-            # 如果API调用失败，返回默认响应用于演示
-            print(f"[LLM调用失败: {e}] 使用模拟响应")
-            return self._mock_llm_response(prompt, system_prompt)
+            raise RuntimeError(f"LLM调用失败: {e}")
 
-    def _mock_llm_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """模拟LLM响应（用于演示）"""
-        if "剧本" in prompt or "戏剧" in prompt:
-            return """{
-  "title": "霓虹灯下的抉择",
-  "synopsis": "艾丽丝在第六街遇到了一个神秘的陌生人，他似乎知道关于空洞的重要秘密",
-  "script": [
-    {"character": "艾丽丝", "dialogue": "你是谁？为什么一直跟着我？", "action": "警惕地后退一步"},
-    {"character": "陌生人", "dialogue": "我是来帮助你的，艾丽丝。关于空洞，你知道的还不够多。", "action": "递过一张折叠的纸条"},
-    {"character": "艾丽丝", "dialogue": "这...这是什么？", "action": "接过纸条，仔细查看"},
-    {"character": "陌生人", "dialogue": "这是你一直在寻找的答案。但是，要小心，有人在监视我们。", "action": "环顾四周，压低声音"}
-  ],
-  "expected_outcome": "艾丽丝获得重要线索，但陷入了更大的危险"
-}"""
-        elif "评价" in prompt or "评分" in prompt:
-            return """剧情连贯性：8分
-角色一致性：9分
-情感共鸣：7分
-创新性：8分
-整体体验：8分
+    async def query_llm_async(self, prompt: str, system_prompt: Optional[str] = None,
+                          use_memory: bool = True, top_k: int = 3) -> str:
+        """异步调用大语言模型"""
+        # 如果启用记忆且记忆系统可用，搜索相关记忆
+        memory_context = ""
+        if use_memory and self.long_term_memory:
+            memory_context = await self._search_memory_async(prompt, top_k)
 
-评语：整体演出流畅，角色塑造鲜明，情感表达自然。"""
-        elif "反应" in prompt:
-            return "我微微眯起眼睛，感受着这份微小的美好，心中的疲惫似乎消散了一些。"
-        else:
-            return "我理解了，让我想想..."
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        # 构建用户提示词，包含记忆上下文
+        user_content = prompt
+        if memory_context:
+            user_content = f"相关记忆:\n{memory_context}\n\n当前请求:\n{prompt}"
+
+        messages.append({"role": "user", "content": user_content})
+
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1000
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            raise RuntimeError(f"LLM异步调用失败: {e}")
+
+    def _search_memory(self, query: str, top_k: int = 3) -> str:
+        """搜索相关记忆（同步）"""
+        if not self.long_term_memory:
+            return ""
+
+        try:
+            results = self.long_term_memory.search_memories(
+                query=query,
+                agent_id=self.agent_id,
+                n_results=top_k
+            )
+
+            if not results:
+                return ""
+
+            # 格式化记忆上下文
+            context_parts = []
+            for i, result in enumerate(results, 1):
+                context_parts.append(f"[记忆{i}] {result.get('content', '')}")
+                if result.get('metadata', {}).get('emotional_valence'):
+                    context_parts[-1] += f" (情感: {result['metadata']['emotional_valence']})"
+
+            return "\n".join(context_parts)
+        except Exception as e:
+            print(f"[记忆搜索警告: {e}]")
+            return ""
+
+    async def _search_memory_async(self, query: str, top_k: int = 3) -> str:
+        """异步搜索相关记忆"""
+        if not self.long_term_memory:
+            return ""
+
+        try:
+            results = await self.long_term_memory.search_memories_async(
+                query=query,
+                agent_id=self.agent_id,
+                n_results=top_k
+            )
+
+            if not results:
+                return ""
+
+            # 格式化记忆上下文
+            context_parts = []
+            for i, result in enumerate(results, 1):
+                context_parts.append(f"[记忆{i}] {result.get('content', '')}")
+                if result.get('metadata', {}).get('emotional_valence'):
+                    context_parts[-1] += f" (情感: {result['metadata']['emotional_valence']})"
+
+            return "\n".join(context_parts)
+        except Exception as e:
+            print(f"[记忆搜索警告: {e}]")
+            return ""
+
+    def store_memory(self, content: str, memory_type: str = "event",
+                   emotional_valence: str = "neutral", **kwargs):
+        """存储记忆到长期记忆"""
+        if not self.long_term_memory:
+            return
+
+        try:
+            self.long_term_memory.add_memory(
+                agent_id=self.agent_id,
+                content=content,
+                memory_type=memory_type,
+                emotional_valence=emotional_valence,
+                **kwargs
+            )
+        except Exception as e:
+            print(f"[记忆存储警告: {e}]")
 
     def remember(self, key: str, value: Any):
         """存储到工作记忆"""

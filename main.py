@@ -1,6 +1,6 @@
 """Moira AI - 双轨驱动事件循环系统"""
 
-from word_engine.core import WorldEngine
+from world_engine.core import WorldEngine
 from world_data import WORLD_DATA, PROTAGONIST
 from utils.logger import MoiraLogger
 

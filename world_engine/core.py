@@ -46,7 +46,12 @@ class WorldEngine:
         }
 
         # 记忆系统（占位，后续连接ChromaDB）
-        self.memory_system = None
+        # 初始化ChromaDB记忆系统
+        from memory_system import MemorySystem
+        self.memory_system = MemorySystem()
+
+        # 动作队列（用于处理Tick延迟）
+        self.action_queue = []
 
     def start(self, tick_interval: int = 60):
         """启动引擎"""
@@ -81,6 +86,9 @@ class WorldEngine:
         print(f"\n{'='*50}")
         print(f"Tick #{self.tick_count} - {timestamp.strftime('%H:%M:%S')}")
         print(f"{'='*50}")
+
+        # 处理动作队列
+        self._process_action_queue()
 
         # 1. 状态路由 - 决定走哪条轨道
         self._route_to_track()
@@ -118,14 +126,32 @@ class WorldEngine:
             print(f"→ 路由: 常规轨道（日常陪伴）")
 
     def _execute_routine_track(self) -> Dict[str, Any]:
-        """执行常规轨道"""
+        """执行常规轨道 - 添加动作队列"""
         print(f"\n[常规轨道] 生成微事件...")
 
         # 1. 生成微事件
         micro_event = self._generate_micro_event()
         print(f"微事件: {micro_event['description']}")
 
-        # 2. 主角反应
+        # 2. 创建动作并加入队列，等待下一Tick执行
+        action = {
+            "type": "process_micro_event",
+            "event": micro_event,
+            "execute_at_tick": self.tick_count + 1  # 下一Tick执行
+        }
+        self.action_queue.append(action)
+
+        return {
+            "event_type": "micro_event_queued",
+            "event": micro_event,
+            "actor_response": actor_action
+        }
+
+    def _execute_micro_event(self, micro_event: Dict[str, Any]):
+        """执行微事件"""
+        print(f"\n[微事件] 处理: {micro_event['description']}")
+
+        # 主角反应
         actor_context = {
             "micro_event": micro_event,
             "protagonist": self.protagonist,
@@ -137,18 +163,12 @@ class WorldEngine:
 
         print(f"主角反应: {actor_action.get('response', '无特殊反应')}")
 
-        # 3. 存储到历史
+        # 存储到历史
         self.event_history["micro_events"].append({
             "tick": self.tick_count,
             "event": micro_event,
             "response": actor_action
         })
-
-        return {
-            "event_type": "micro_event",
-            "event": micro_event,
-            "actor_response": actor_action
-        }
 
     def _execute_drama_track(self) -> Dict[str, Any]:
         """执行戏剧轨道"""
@@ -224,6 +244,12 @@ class WorldEngine:
             # 5. 决定是否写入世界
             if review["approved"]:
                 print("[OK] 演出优秀，写入世界记忆")
+                # 写入ChromaDB记忆系统
+                self.memory_system.add_drama_event(
+                    drama_event=drama_event,
+                    performance=performance_results,
+                    review=review
+                )
                 self.event_history["drama_events"].append({
                     "tick": self.tick_count,
                     "event": drama_event,
@@ -316,6 +342,20 @@ class WorldEngine:
             "triggers": selected_template["triggers"],
             "impact": selected_template["impact"]
         }
+
+    def _process_action_queue(self):
+        """处理动作队列"""
+        current_tick_actions = [action for action in self.action_queue
+                             if action["execute_at_tick"] <= self.tick_count]
+
+        for action in current_tick_actions:
+            if action["type"] == "process_micro_event":
+                self._execute_micro_event(action["event"])
+            # 其他动作类型...
+
+        # 移除已执行的动作
+        self.action_queue = [action for action in self.action_queue
+                           if action["execute_at_tick"] > self.tick_count]
 
     def _update_world_state(self):
         """更新世界状态"""
