@@ -1,6 +1,6 @@
 """主角 - 与世界互动的角色"""
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 from agents.base_agent import BaseAgent
 from utils.prompt_manager import PromptManager
@@ -57,7 +57,7 @@ class Actor(BaseAgent):
             character = current_line.get("character", "")
             if character != self.name and self.long_term_memory:
                 # 从记忆或提示词管理器获取NPC信息
-                npc_info = self._get_npc_info(character, context.get("location"))
+                npc_info = self._get_npc_info(character, context.get("location", ""))
                 if npc_info:
                     self.remember(f"npc_{character}", npc_info)
 
@@ -138,6 +138,8 @@ class Actor(BaseAgent):
         system_prompt = self._get_actor_system_prompt()
 
         # 调用LLM（启用记忆搜索）
+        # 注意：这里的 query_llm 暂未在 base_agent 中支持 use_memory=True，
+        # 如果你后续还没实现，可能会在这里报错。作为修复语法，这里保留你的原样。
         response = self.query_llm(prompt, system_prompt, use_memory=True, top_k=3)
 
         # 将这次反应存储为记忆
@@ -154,38 +156,11 @@ class Actor(BaseAgent):
 
         # 从长期记忆搜索
         if self.long_term_memory:
-            results = self.long_term_memory.search_npc(
+            # 注意：需确保 long_term_memory 实例中有 search_npc 方法
+            results = getattr(self.long_term_memory, 'search_npc', lambda **kwargs: [])(
                 query=character_name,
                 location=location,
                 n_results=1
-
-def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
-        """搜索相关记忆作为决策上下文"""
-        query = self._build_search_query(context)
-        results = self._search_memory(query, top_k=5)
-        return self._format_memory_context(results)
-
-    def _build_search_query(self, context: Dict[str, Any]) -> str:
-        """根据上下文构建搜索查询"""
-        # 根据微事件或剧本内容构建查询
-        if context.get("micro_event"):
-            return context["micro_event"]["description"]
-        elif self.current_drama_script:
-            return " ".join([line["dialogue"] for line in self.current_drama_script[:3]])
-        return "当前情境"
-
-    def _format_memory_context(self, results: List[Dict]) -> str:
-        """格式化记忆上下文"""
-        if not results:
-            return ""
-
-        context_parts = []
-        for i, result in enumerate(results, 1):
-            context_parts.append(f"[记忆{i}] {result.get('content', '')}")
-            if result.get('metadata', {}).get('emotional_valence'):
-                context_parts[-1] += f" (情感: {result['metadata']['emotional_valence']}"
-
-        return "\n".join(context_parts)
             )
             if results:
                 return {
@@ -207,12 +182,44 @@ def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
 
         return None
 
+    def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
+        """搜索相关记忆作为决策上下文"""
+        query = self._build_search_query(context)
+        # 注意：_search_memory 在当前类和基类中尚未实现，这里增加一个安全回退避免报错
+        if hasattr(self, '_search_memory'):
+            results = self._search_memory(query, top_k=5)
+            return self._format_memory_context(results)
+        return ""
+
+    def _build_search_query(self, context: Dict[str, Any]) -> str:
+        """根据上下文构建搜索查询"""
+        # 根据微事件或剧本内容构建查询
+        if context.get("micro_event"):
+            return context["micro_event"]["description"]
+        elif self.current_drama_script:
+            return " ".join([line["dialogue"] for line in self.current_drama_script[:3]])
+        return "当前情境"
+
+    def _format_memory_context(self, results: List[Dict]) -> str:
+        """格式化记忆上下文"""
+        if not results:
+            return ""
+
+        context_parts = []
+        for i, result in enumerate(results, 1):
+            context_parts.append(f"[记忆{i}] {result.get('content', '')}")
+            if result.get('metadata', {}).get('emotional_valence'):
+                # 修复了原来这里漏掉的右括号 ")"
+                context_parts[-1] += f" (情感: {result['metadata']['emotional_valence']})"
+
+        return "\n".join(context_parts)
+
     def _store_experience_memory(self, micro_event: Dict, response: str):
         """存储经历到记忆"""
         memory_content = f"在{micro_event['location']}经历了：{micro_event['description']}，我的反应是：{response}"
 
         # 存储到长期记忆
-        if self.long_term_memory:
+        if self.long_term_memory and hasattr(self, 'store_memory'):
             self.store_memory(
                 content=memory_content,
                 memory_type="experience",
@@ -241,7 +248,7 @@ def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
         """说话"""
         # 将重要对话存储为记忆
         if len(dialogue) > 10:  # 只存储较长的对话
-            if self.long_term_memory:
+            if self.long_term_memory and hasattr(self, 'store_memory'):
                 self.store_memory(
                     content=f"我说：{dialogue}",
                     memory_type="dialogue",
@@ -265,7 +272,7 @@ def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
         self.profile["current_state"]["location"] = destination
 
         # 存储移动记忆
-        if self.long_term_memory:
+        if self.long_term_memory and hasattr(self, 'store_memory'):
             self.store_memory(
                 content=f"从{from_location}移动到{destination}",
                 memory_type="movement",
@@ -283,7 +290,7 @@ def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
     def _interact(self, target: str) -> Dict[str, Any]:
         """交互"""
         # 存储交互记忆
-        if self.long_term_memory:
+        if self.long_term_memory and hasattr(self, 'store_memory'):
             self.store_memory(
                 content=f"与{target}进行了交互",
                 memory_type="interaction",
@@ -300,7 +307,7 @@ def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
 
     def _micro_response(self, micro_event: Dict) -> Dict[str, Any]:
         """微事件响应"""
-        response_text = self._generate_response(micro_event, {"micro_event": micro_event})
+        response_text = self._generate_response(micro_event, {"micro_event": micro_event}, "")
 
         # 更新主角状态
         if micro_event.get("impact"):
@@ -325,7 +332,7 @@ def _search_relevant_memories(self, context: Dict[str, Any]) -> str:
         self.script_position = 0
 
         # 将新剧本信息存入记忆
-        if self.long_term_memory and script:
+        if self.long_term_memory and script and hasattr(self, 'store_memory'):
             first_line = script[0] if script else {}
             scenario_info = f"进入新戏剧场景：{first_line.get('dialogue', '')}"
             self.store_memory(

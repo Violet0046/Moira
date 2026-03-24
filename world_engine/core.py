@@ -144,7 +144,7 @@ class WorldEngine:
         return {
             "event_type": "micro_event_queued",
             "event": micro_event,
-            "actor_response": actor_action
+            "actor_response": "等待下一Tick处理"  # 占位符，表示正在排队
         }
 
     def _execute_micro_event(self, micro_event: Dict[str, Any]):
