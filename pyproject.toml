@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "moira"
+version = "0.1.0"
+description = "Production-grade multi-agent narrative platform."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+authors = [
+  { name = "Moira Team" }
+]
+dependencies = [
+  "fastapi>=0.116.0,<1.0.0",
+  "uvicorn[standard]>=0.35.0,<1.0.0",
+  "pydantic>=2.12.0,<3.0.0",
+  "pydantic-settings>=2.10.0,<3.0.0",
+  "sqlalchemy[asyncio]>=2.0.48,<3.0.0",
+  "asyncpg>=0.30.0,<1.0.0",
+  "alembic>=1.16.0,<2.0.0",
+  "redis>=6.0.0,<7.0.0",
+  "httpx>=0.28.0,<1.0.0",
+  "structlog>=25.4.0,<26.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0,<9.0.0",
+  "pytest-asyncio>=1.0.0,<2.0.0",
+  "ruff>=0.11.0,<1.0.0",
+  "mypy>=1.15.0,<2.0.0"
+]
+orchestration = [
+  "langgraph"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/moira"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+plugins = []
